@@ -349,8 +349,11 @@ pub fn play(root: &Path, language: &str) -> Result<u8> {
         let mut terminate=tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         crate::cloud_auto::launch(&app)?;let mut previous=String::new();
         loop {
+            let mut answer=None;
             {let s=app.lock();let message=s.cloud["message"].as_str().unwrap_or("");if message!=previous&&!message.is_empty(){println!("{}",crate::i18n::text(message,language));previous=message.into();}
-                if s.active.is_none(){require(s.cloud["state"]!="attention","Der Start oder Cloud-Abgleich benötigt eine Entscheidung. Bitte Flightdeck öffnen.")?;return Ok(s.exit_code.unwrap_or(0).clamp(0,255) as u8);}}
+                if s.active.is_none(){if s.cloud["state"]=="attention"{let st=crate::cloud_sync::automatic(&s);let rid=st["request_id"].clone();if st["conflict"]==true&&st["can_retry"]==true{answer=Some(("resolve",json!({"request_id":rid,"choice":"local"})));}else if st["error_code"]=="unsafe_session"&&st["can_retry"]==true{answer=Some(("retry",json!({"request_id":rid})));}else if st["can_play_local"]==true{answer=Some(("play-local",json!({"request_id":rid})));}else{require(false,"Der Start oder Cloud-Abgleich benötigt eine Entscheidung. Bitte Flightdeck öffnen.")?;}}else{return Ok(s.exit_code.unwrap_or(0).clamp(0,255) as u8);}}
+            }
+            if let Some((op,data))=answer{crate::cloud_auto::action(&app,op,&data)?;continue;}
             let stop=tokio::select!{_=interrupt.recv()=>true,_=terminate.recv()=>true,_=tokio::time::sleep(Duration::from_millis(100))=>false};
             if stop {let _=app.stop();app.close();}
         }
